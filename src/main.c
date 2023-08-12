@@ -9,6 +9,20 @@
 #include "shader_parser.h"
 #include "texture.h"
 
+#define MAX_VERTEX_BUFFER 512 * 1024
+#define MAX_ELEMENT_BUFFER 128 * 1024
+#define NK_INCLUDE_FIXED_TYPES
+#define NK_INCLUDE_STANDARD_IO
+#define NK_INCLUDE_STANDARD_VARARGS
+#define NK_INCLUDE_DEFAULT_ALLOCATOR
+#define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
+#define NK_INCLUDE_FONT_BAKING
+#define NK_INCLUDE_DEFAULT_FONT
+#define NK_IMPLEMENTATION
+#define NK_GLFW_GL3_IMPLEMENTATION
+#include "nuklear/nuklear.h"
+#include "nuklear/nuklear_glfw_gl3.h"
+
 void GLAPIENTRY MessageCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userParam);
 
 int main()
@@ -114,10 +128,24 @@ int main()
 
     vec3 light_positions[2] = {{ window_width / 2, window_height / 2, 100}, { window_width / 2 - 160, window_height / 2, 100 }};
     float light_radii[2] = { 1000, 200 };
+    vec4 light_colours[2] = {{1.0, 1.0, 1.0, 1.0}, {1.0, 1.0, 1.0, 1.0}};
 
     // Camera
 
     vec2 camera_position = {0, 0};
+
+    // Nuklear
+
+    struct nk_glfw glfw = {0};
+    struct nk_context *ctx;
+
+    ctx = nk_glfw3_init(&glfw, window, NK_GLFW3_INSTALL_CALLBACKS);
+
+    {
+        struct nk_font_atlas *atlas;
+        nk_glfw3_font_stash_begin(&glfw, &atlas);
+        nk_glfw3_font_stash_end(&glfw);
+    }
 
     // Render Loop
 
@@ -172,20 +200,26 @@ int main()
 
         // Render
 
+        glViewport(0, 0, window_width, window_height);
+        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+        glEnable(GL_DEBUG_OUTPUT);
+        glDebugMessageCallback(MessageCallback, 0);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(shader_program_id);
 
-        
         shader_set_uniform_matrix_4fv(shader_program_id, "u_View", view);
         shader_set_uniform_matrix_4fv(shader_program_id, "u_Projection", projection);
-
         shader_set_uniform_matrix_4fv(shader_program_id, "u_Model", model);
 
         glUniform1iv(glGetUniformLocation(shader_program_id, "u_Textures"), 3, (int[]){0, 1, 2});
         glUniform1f(glGetUniformLocation(shader_program_id, "u_Ambient"), ambient);
         glUniform3fv(glGetUniformLocation(shader_program_id, "u_LightPos"), 2, light_positions_transformed);
         glUniform1fv(glGetUniformLocation(shader_program_id, "u_LightRadius"), 2, light_radii);
+        glUniform4fv(glGetUniformLocation(shader_program_id, "u_LightColors"), 2, light_colours);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, color_map.id);
@@ -199,6 +233,49 @@ int main()
 
         glUseProgram(0);
 
+        // Nuklear
+
+        nk_glfw3_new_frame(&glfw);
+        if (nk_begin(ctx, "Debug", nk_rect(50, 50, 230, 250),
+            NK_WINDOW_BORDER|NK_WINDOW_MOVABLE|NK_WINDOW_SCALABLE|
+            NK_WINDOW_MINIMIZABLE|NK_WINDOW_TITLE))
+        {
+            struct nk_colorf color;
+            color.r = light_colours[0][0];
+            color.g = light_colours[0][1];
+            color.b = light_colours[0][2];
+            color.a = light_colours[0][3];
+
+            nk_layout_row_dynamic(ctx, 20, 1);
+            nk_label(ctx, "Light Colour", NK_TEXT_LEFT);
+            nk_layout_row_dynamic(ctx, 25, 1);
+            if (nk_combo_begin_color(ctx, nk_rgb_cf(color), nk_vec2(nk_widget_width(ctx),400))) {
+                nk_layout_row_dynamic(ctx, 120, 1);
+                color = nk_color_picker(ctx, color, NK_RGBA);
+                nk_layout_row_dynamic(ctx, 25, 1);
+                color.r = nk_propertyf(ctx, "#R:", 0, color.r, 1.0f, 0.01f, 0.005f);
+                color.g = nk_propertyf(ctx, "#G:", 0, color.g, 1.0f, 0.01f, 0.005f);
+                color.b = nk_propertyf(ctx, "#B:", 0, color.b, 1.0f, 0.01f, 0.005f);
+                color.a = nk_propertyf(ctx, "#A:", 0, color.a, 1.0f, 0.01f, 0.005f);
+                nk_combo_end(ctx);
+            }
+
+            nk_layout_row_dynamic(ctx, 30, 1);
+            nk_property_float(ctx, "2nd Light Radius", 0, &light_radii[1], 600, 20, 1);
+
+            for (int i = 0; i < 2; i++)
+            {
+                light_colours[i][0] = color.r;
+                light_colours[i][1] = color.g;
+                light_colours[i][2] = color.b;
+                light_colours[i][3] = color.a;
+            }
+        }
+        nk_end(ctx);
+
+ 
+        nk_glfw3_render(&glfw, NK_ANTI_ALIASING_ON, MAX_VERTEX_BUFFER, MAX_ELEMENT_BUFFER);
+
         // Swap Buffers
 
         glfwSwapBuffers(window);
@@ -211,6 +288,7 @@ int main()
     glDeleteBuffers(1, &vertex_buffer_id);
     glDeleteBuffers(1, &index_buffer_id);
 
+    nk_glfw3_shutdown(&glfw);
     glfwTerminate();
 
     return 0;
